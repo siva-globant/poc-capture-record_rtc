@@ -198,7 +198,7 @@ function App() {
   const stopVideoRecording = () => {
     setIsRecording(false);
     if (!mediaRecordRef.current) return;
-    const { stopRecording, getBlob, toURL, reset } = mediaRecordRef.current;
+    const { stopRecording, getBlob, toURL } = mediaRecordRef.current;
 
     stopRecording(() => {
       const blob = getBlob(),
