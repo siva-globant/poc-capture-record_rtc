@@ -188,6 +188,7 @@ function App() {
     if (!mediaStream.current) return alert("Cannot record Now");
     const media = new RecordRTC(mediaStream.current, {
       type: "video",
+      bitsPerSecond: Number(currentBitRate),
     });
     mediaRecordRef.current = media;
     const { startRecording } = mediaRecordRef.current;
@@ -261,7 +262,13 @@ function App() {
           >
             ExtendableMediaRecorder
           </a>{" "}
-          | Record RTC | <span style={{ opacity: 0.5 }}>Record WebCam</span>
+          | Record RTC |
+          <a
+            target="_blank"
+            href="https://siva-globant.github.io/poc-capture-react_webcam/"
+          >
+            React WebCam
+          </a>
         </h3>
       </div>
       <div
