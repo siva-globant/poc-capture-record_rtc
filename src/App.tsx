@@ -241,9 +241,9 @@ function App() {
     await getCameraPermission();
     permissionSpan.finish();
 
-    const videoTakingSpan = transaction.startChild({
-      op: SentrySpan.TAKE_VIDEO,
-    });
+    // const videoTakingSpan = transaction.startChild({
+    //   op: SentrySpan.TAKE_VIDEO,
+    // });
     setIsRecording(true);
     if (!mediaStream.current) return alert("Cannot record Now");
     const media = new RecordRTC(mediaStream.current, {
