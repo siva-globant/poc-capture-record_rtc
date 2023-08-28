@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import RecordRTC from "recordrtc";
+import RecordRTC, { type Options } from "recordrtc";
 
 import type { ChangeEvent } from "react";
 
 import "./App.css";
 import {
-  // useMonitoring,
-  // SentryOperation,
+  useMonitoring,
+  SentryOperation,
   SentryTransaction,
   SentryTag,
   SentrySpan,
+  type SentryTransactionObject,
 } from "./context";
-import * as Sentry from "@sentry/react";
-import type { Options } from "recordrtc";
+import { useProfiler } from "@sentry/react";
+
 type ResolutionValueUnions = "1920x1080" | "1280x720" | "640x480" | "3840x2160";
 type BitRateValueUnions =
   | "8000000000"
@@ -101,10 +102,7 @@ const FRAME_RATES: Array<ISelectRecord<FrameRateValueUnions>> = [
     value: "60",
   },
 ];
-/**
- * MODE
- * PORTRAIT | LANDSCAPE
- */
+
 const isPortrait = true,
   COMPRESSION_RATIO = 0.8,
   IS_SAFARI = /^((?!chrome|android).)*safari/i.test(navigator.userAgent),
@@ -114,9 +112,12 @@ const isPortrait = true,
   EXTENSION = IS_SAFARI ? ".mp4" : ".webm";
 
 function App() {
+  const { measurePerformance } = useMonitoring();
+  useProfiler("MainApp");
   const mediaRecordRef = useRef<RecordRTC | null>(null);
   const videoEleRef = useRef<HTMLVideoElement>(null);
   const mediaStream = useRef<MediaStream | null>(null);
+  const transaction = useRef<SentryTransactionObject | null>(null);
 
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [fetchingCameraInfo, setFetchingCameraInfo] = useState<boolean>(true);
@@ -130,8 +131,6 @@ function App() {
     useState<MediaTrackCapabilities | null>(null);
   // const [recordingStatus,setRecordingStatus]=useState<"idle"|"recording">("idle")
   const [recordedVideo, setRecordedVideo] = useState<IRecordedVideoState[]>([]);
-
-  // const { measurePerformance } = useMonitoring();
 
   const bytesToSize = (bytes: number) => {
     const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
@@ -226,24 +225,25 @@ function App() {
     }
   }, [currentFrameRate, currentResolution]);
   const startVideoRecording = async () => {
-    const transaction = Sentry.startTransaction({
-      name: SentryTransaction.VIDEO_PROCESSING,
-      // op: SentryOperation.VIDEO_CAPTURE,
-    });
-    transaction.setTag(
+    transaction.current = measurePerformance(
+      SentryTransaction.VIDEO_PROCESSING,
+      SentryOperation.VIDEO_CAPTURE
+    );
+    const { setTag, startSpan, finishSpan } = transaction.current;
+    setTag(
       SentryTag.INSPECTION_ID,
       `Random-${Math.floor(Math.random() * 100)}`
     );
 
-    const permissionSpan = transaction.startChild({
-      op: SentrySpan.ASK_PERMISSION,
-    });
+    startSpan(SentrySpan.ASK_PERMISSION, null);
     await getCameraPermission();
-    permissionSpan.finish();
+    finishSpan(SentrySpan.ASK_PERMISSION);
 
-    // const videoTakingSpan = transaction.startChild({
-    //   op: SentrySpan.TAKE_VIDEO,
-    // });
+    startSpan(SentrySpan.TAKE_VIDEO, {
+      RESOLUTION: currentResolution as string,
+      BIT_RATE: currentBitRate as string,
+      FRAME_RATE: currentFrameRate as string,
+    });
     setIsRecording(true);
     if (!mediaStream.current) return alert("Cannot record Now");
     const media = new RecordRTC(mediaStream.current, {
@@ -263,6 +263,8 @@ function App() {
     const { stopRecording, getBlob, toURL } = mediaRecordRef.current;
 
     stopRecording(() => {
+      const { startSpan, finishSpan, finish } = transaction.current!;
+      finishSpan(SentrySpan.TAKE_VIDEO);
       const blob = getBlob(),
         url = toURL();
       const currentRecordVideoInfo = {
@@ -274,7 +276,16 @@ function App() {
         type: blob.type,
         url,
       };
+      startSpan(SentrySpan.BLOB_MERGING, {
+        RESOLUTION: currentRecordVideoInfo["resolution"] as string,
+        BIT_RATE: currentRecordVideoInfo["bitRate"] as string,
+        FRAME_RATE: currentRecordVideoInfo["frameRate"] as string,
+        SIZE: currentRecordVideoInfo["size"],
+        TYPE: currentRecordVideoInfo["type"],
+      });
       setRecordedVideo((prevState) => [...prevState, currentRecordVideoInfo]);
+      finishSpan(SentrySpan.BLOB_MERGING);
+      finish("SUCCESS");
       if (mediaStream.current)
         mediaStream.current.getTracks().forEach((track) => track.stop());
       if (videoEleRef.current) videoEleRef.current.srcObject = null;
@@ -472,28 +483,44 @@ function App() {
                     return [...prevState];
                   });
                 }}
-                style={{ width: "150px", aspectRatio: 16 / 9 }}
+                style={{
+                  width: "100%",
+                  aspectRatio: 16 / 9,
+                }}
                 controls
                 src={ele.url}
               />
-              <div
-                style={{
-                  display: "flex",
-                  gap: "4px",
-                  flexWrap: "wrap",
-                  justifyContent: "space-around",
-                }}
-              >
-                {Object.keys(ele)
-                  .filter((e) => !["url"].includes(e))
-                  .map((eleKey) => (
-                    <p key={eleKey}>
-                      {/* @ts-ignore */}
-                      {eleKey}:{ele[eleKey]}
-                    </p>
-                  ))}
+              <div>
+                Name : {ele.name}
+                <h4>Config Info</h4>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "4px",
+                    flexWrap: "wrap",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <span>Resolution: {ele.resolution}</span>
+                  <span>Frame Rate: {ele.frameRate}</span>
+                  <span>Bit Rate: {ele.bitRate}</span>
+                </div>
+                <h4>Video Info</h4>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "4px",
+                    flexWrap: "wrap",
+                    justifyContent: "space-between",
+                  }}
+                >
+                  <span>Mime Type: {ele.type}</span>
+                  <span>Video Width: {ele.videoWidth}</span>
+                  <span>Video Height: {ele.videoHeight}</span>
+                  <span>Size: {ele.size}</span>
+                </div>
               </div>
-              <a href={ele.url} download={ele.name}>
+              <a className="button" href={ele.url} download={ele.name}>
                 Download
               </a>
             </div>
@@ -503,6 +530,5 @@ function App() {
     </div>
   );
 }
-const SentryApp = Sentry.withProfiler(App);
 
-export default SentryApp;
+export default App;
